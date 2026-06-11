@@ -1,0 +1,10 @@
+{
+  "name": "planificador-itba",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Planificador de cursada para Ingenieria Informatica ITBA",
+  "scripts": {
+    "dev": "npx serve .",
+    "start": "npx serve ."
+  }
+}
