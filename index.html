@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Selector de Materias ITBA</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Planificador ITBA</p>
+        <h1>Defini la cursada mas eficiente para terminar Informatica lo antes posible.</h1>
+        <p class="hero-text">
+          Marca las materias ya aprobadas, elegi el rango de creditos por cuatri y la app arma la mejor hoja de ruta posible
+          usando correlativas, creditos acumulados y disponibilidad por cuatrimestre del plan ITBA.
+        </p>
+      </div>
+      <div class="hero-panel">
+        <div class="hero-stat">
+          <span id="remainingCreditsStat">0</span>
+          <small>creditos pendientes</small>
+        </div>
+        <div class="hero-stat">
+          <span id="completedSubjectsStat">0</span>
+          <small>materias aprobadas</small>
+        </div>
+        <div class="hero-stat">
+          <span id="estimatedTermsStat">0</span>
+          <small>cuatris hasta terminar</small>
+        </div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel controls-panel">
+        <div class="panel-title">
+          <h2>Configuracion</h2>
+          <p>El plan esta embebido en la app. No depende de archivos externos para funcionar.</p>
+        </div>
+
+        <div class="controls-grid">
+          <label>
+            <span>Minimo de creditos por cuatri</span>
+            <input id="minCredits" type="number" min="0" max="40" step="1">
+          </label>
+
+          <label>
+            <span>Maximo de creditos por cuatri</span>
+            <input id="maxCredits" type="number" min="1" max="40" step="1">
+          </label>
+
+          <label>
+            <span>Maximo de materias por cuatri</span>
+            <input id="maxSubjects" type="number" min="1" max="12" step="1">
+          </label>
+        </div>
+
+        <div class="button-row">
+          <button id="submitPlanBtn">Enviar seleccion</button>
+          <button id="resetProgressBtn" class="secondary">Limpiar progreso</button>
+          <button id="importBtn" class="secondary">Importar progreso</button>
+          <button id="exportBtn">Exportar progreso</button>
+        </div>
+        <input id="importFileInput" type="file" accept="application/json" hidden>
+        <p id="submissionStatus" class="status-text"></p>
+      </section>
+
+      <section class="panel progress-panel">
+        <div class="panel-title">
+          <h2>Estado actual</h2>
+          <p>Marca las materias ya aprobadas. La recomendacion se recalcula completa desde ahi.</p>
+        </div>
+        <div class="toolbar">
+          <input id="subjectSearch" type="search" placeholder="Buscar materia o codigo...">
+          <span id="subjectCounter" class="pill"></span>
+        </div>
+        <div id="subjectsChecklist" class="checklist"></div>
+      </section>
+
+      <section class="panel preferences-panel">
+        <div class="panel-title">
+          <h2>Restricciones por materia</h2>
+          <p>Puedes priorizar una materia en un cuatri o marcarla para evitarla por ahora.</p>
+        </div>
+        <div class="toolbar">
+          <input id="preferenceSearch" type="search" placeholder="Buscar materia para configurar...">
+          <span id="preferenceCounter" class="pill"></span>
+        </div>
+        <div id="preferencesTable" class="preferences-table"></div>
+      </section>
+
+      <section class="panel results-panel">
+        <div class="panel-title">
+          <h2>Plan optimo</h2>
+          <p>La estrategia busca minimizar la cantidad total de cuatrimestres hasta terminar la carrera.</p>
+        </div>
+        <div id="summaryCards" class="summary-cards"></div>
+        <div id="termRoadmap" class="roadmap"></div>
+      </section>
+    </main>
+  </div>
+
+  <template id="subjectCheckboxTemplate">
+    <label class="subject-item">
+      <input type="checkbox">
+      <div>
+        <strong></strong>
+        <small></small>
+      </div>
+    </label>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
