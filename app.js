@@ -3,7 +3,8 @@ const DEFAULT_STATE = {
   maxCredits: 24,
   maxSubjects: 5,
   completed: [],
-  preferences: {}
+  preferences: {},
+  swaps: {}
 };
 
 const CURRICULUM = [
@@ -54,7 +55,7 @@ const CURRICULUM = [
 ];
 
 const state = loadState();
-let submittedSelection = loadSubmittedSelection();
+let activeDragPayload = null;
 
 const elements = {
   minCredits: document.querySelector("#minCredits"),
@@ -68,7 +69,6 @@ const elements = {
   summaryCards: document.querySelector("#summaryCards"),
   subjectSearch: document.querySelector("#subjectSearch"),
   subjectCounter: document.querySelector("#subjectCounter"),
-  submitPlanBtn: document.querySelector("#submitPlanBtn"),
   importBtn: document.querySelector("#importBtn"),
   importFileInput: document.querySelector("#importFileInput"),
   submissionStatus: document.querySelector("#submissionStatus"),
@@ -102,6 +102,7 @@ function bindEvents() {
     }
     persistState();
     syncInputs();
+    renderResults();
     renderSubmissionStatus();
   });
 
@@ -112,6 +113,7 @@ function bindEvents() {
     }
     persistState();
     syncInputs();
+    renderResults();
     renderSubmissionStatus();
   });
 
@@ -119,14 +121,8 @@ function bindEvents() {
     state.maxSubjects = clampNumber(elements.maxSubjects.value, 1, 12, 5);
     persistState();
     syncInputs();
-    renderSubmissionStatus();
-  });
-
-  elements.submitPlanBtn.addEventListener("click", () => {
-    submittedSelection = snapshotState();
-    persistSubmittedSelection();
-    renderSubmissionStatus();
     renderResults();
+    renderSubmissionStatus();
   });
 
   elements.importBtn.addEventListener("click", () => {
@@ -141,6 +137,7 @@ function bindEvents() {
   elements.resetProgressBtn.addEventListener("click", () => {
     state.completed = [];
     state.preferences = {};
+    state.swaps = {};
     persistState();
     renderAll();
   });
@@ -220,6 +217,7 @@ function renderPreferences() {
     select.value = getSubjectPreference(subject.id).mode;
     select.addEventListener("change", () => {
       setSubjectPreference(subject.id, { mode: select.value });
+      renderResults();
       renderSubmissionStatus();
     });
 
@@ -234,42 +232,19 @@ function renderPreferences() {
 }
 
 function renderResults() {
-  if (!submittedSelection) {
-    renderEmptyResults();
-    return;
-  }
-
-  const plan = buildOptimalPlan(submittedSelection);
-  const completed = new Set(submittedSelection.completed);
+  const selection = snapshotState();
+  const plan = buildOptimalPlan(selection);
+  const completed = new Set(selection.completed);
   const pendingCredits = getPendingSubjects(completed).reduce((sum, subject) => sum + getSubjectCredits(subject), 0);
   const completedCredits = getCompletedCredits(completed);
-  const availableNow = getAvailableSubjects(completed, submittedSelection.preferences);
+  const availableNow = getAvailableSubjects(completed, selection.preferences);
 
   elements.remainingCreditsStat.textContent = String(pendingCredits);
-  elements.completedSubjectsStat.textContent = String(submittedSelection.completed.length);
+  elements.completedSubjectsStat.textContent = String(selection.completed.length);
   elements.estimatedTermsStat.textContent = String(plan.finished ? plan.terms.length : 0);
 
   renderSummaryCards(plan, pendingCredits, completedCredits, availableNow.length);
   renderRoadmap(plan);
-}
-
-function renderEmptyResults() {
-  elements.remainingCreditsStat.textContent = "0";
-  elements.completedSubjectsStat.textContent = "0";
-  elements.estimatedTermsStat.textContent = "0";
-  elements.summaryCards.innerHTML = `
-    <article class="summary-card">
-      <h3>Esperando envio</h3>
-      <strong>-</strong>
-      <p>Completa tu seleccion y apreta "Enviar seleccion" para calcular los cuatrimestres.</p>
-    </article>
-  `;
-  elements.termRoadmap.innerHTML = `
-    <article class="term-card">
-      <h3>Sin plan calculado</h3>
-      <p>El plan aparece recien despues de enviar tu seleccion actual.</p>
-    </article>
-  `;
 }
 
 function renderSummaryCards(plan, pendingCredits, completedCredits, availableCount) {
@@ -311,8 +286,16 @@ function renderRoadmap(plan) {
     article.className = "term-card";
 
     const pickedList = term.picked.length
-      ? `<ul>${term.picked
-          .map((subject) => `<li><strong>${subject.name}</strong> (${formatCredits(getSubjectCredits(subject))})<br>${subject.reasonText}</li>`)
+      ? `<ul class="picked-list">${term.picked
+          .map((subject) => `
+            <li
+              class="picked-subject"
+              data-term-index="${index}"
+              data-picked-id="${subject.id}"
+            >
+              <strong>${subject.name}</strong> (${formatCredits(getSubjectCredits(subject))})<br>${subject.reasonText}
+            </li>
+          `)
           .join("")}</ul>`
       : "<p>Sin materias para este cuatri.</p>";
 
@@ -321,7 +304,12 @@ function renderRoadmap(plan) {
         <div class="candidate-list">
           ${term.alternatives
             .map((subject) => `
-              <article class="candidate-card">
+              <article
+                class="candidate-card"
+                draggable="true"
+                data-term-index="${index}"
+                data-candidate-id="${subject.id}"
+              >
                 <h4>${subject.name} <span class="tag">${formatCredits(getSubjectCredits(subject))}</span></h4>
                 <p>${subject.reasonText}</p>
               </article>
@@ -354,6 +342,84 @@ function renderRoadmap(plan) {
 
     elements.termRoadmap.appendChild(article);
   });
+
+  bindRoadmapDragAndDrop();
+}
+
+function bindRoadmapDragAndDrop() {
+  elements.termRoadmap.querySelectorAll(".candidate-card[draggable='true']").forEach((candidate) => {
+    candidate.addEventListener("dragstart", (event) => {
+      activeDragPayload = {
+        termIndex: Number(candidate.dataset.termIndex),
+        candidateId: candidate.dataset.candidateId
+      };
+      const payload = JSON.stringify(activeDragPayload);
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("application/json", payload);
+      event.dataTransfer.setData("text/plain", payload);
+      candidate.classList.add("is-dragging");
+    });
+
+    candidate.addEventListener("dragend", () => {
+      activeDragPayload = null;
+      candidate.classList.remove("is-dragging");
+      clearDropTargets();
+    });
+  });
+
+  elements.termRoadmap.querySelectorAll(".picked-subject").forEach((picked) => {
+    picked.addEventListener("dragover", (event) => {
+      const payload = getDragPayload(event);
+      if (!payload || payload.termIndex !== Number(picked.dataset.termIndex)) {
+        return;
+      }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      picked.classList.add("is-drop-target");
+    });
+
+    picked.addEventListener("dragleave", () => {
+      picked.classList.remove("is-drop-target");
+    });
+
+    picked.addEventListener("drop", (event) => {
+      const payload = getDragPayload(event);
+      if (!payload || payload.termIndex !== Number(picked.dataset.termIndex)) {
+        return;
+      }
+      event.preventDefault();
+      activeDragPayload = null;
+      clearDropTargets();
+      addTermSwap(payload.termIndex, payload.candidateId, picked.dataset.pickedId);
+    });
+  });
+}
+
+function getDragPayload(event) {
+  if (activeDragPayload) {
+    return activeDragPayload;
+  }
+
+  const rawPayload = event.dataTransfer.getData("application/json") || event.dataTransfer.getData("text/plain");
+  if (!rawPayload) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(rawPayload);
+    if (!Number.isFinite(payload.termIndex) || !payload.candidateId) {
+      return null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function clearDropTargets() {
+  elements.termRoadmap.querySelectorAll(".is-drop-target").forEach((target) => {
+    target.classList.remove("is-drop-target");
+  });
 }
 
 function buildOptimalPlan(selection) {
@@ -379,7 +445,8 @@ function buildOptimalPlan(selection) {
       const available = getAvailableSubjects(node.completed, selection.preferences).map((subject) =>
         scoreSubject(subject, node.completed, selection)
       );
-      const combinations = generateTermCombinations(available, node.completed, selection);
+      const termIndex = node.terms.length;
+      const combinations = generateTermCombinations(available, node.completed, selection, termIndex);
 
       combinations.forEach((combo) => {
         const nextCompleted = new Set(node.completed);
@@ -431,9 +498,11 @@ function chooseBestFinishedState(states) {
   return { finished: true, terms: best.terms };
 }
 
-function generateTermCombinations(available, completed, selection) {
-  const forcedZeroCredit = available.filter((subject) => getSubjectCredits(subject) === 0);
-  const positiveCandidates = available
+function generateTermCombinations(available, completed, selection, termIndex = 0) {
+  const override = getTermOverride(selection, termIndex, available);
+  const availableForPicking = available.filter((subject) => !override.excludeIds.has(subject.id));
+  const forcedZeroCredit = availableForPicking.filter((subject) => getSubjectCredits(subject) === 0);
+  const positiveCandidates = availableForPicking
     .filter((subject) => getSubjectCredits(subject) > 0)
     .sort((a, b) => b.score - a.score);
 
@@ -465,14 +534,24 @@ function generateTermCombinations(available, completed, selection) {
 
   dfs(0, [], 0);
 
-  const viable = rawCombos.filter((combo) => combo.picked.length > 0);
+  const viable = rawCombos.filter((combo) => {
+    if (!combo.picked.length) {
+      return false;
+    }
+    const pickedIds = new Set(combo.picked.map((subject) => subject.id));
+    return [...override.includeIds].every((id) => pickedIds.has(id));
+  });
   const aboveMin = viable.filter((combo) => combo.totalCredits >= selection.minCredits);
   const pool = aboveMin.length ? aboveMin : viable;
 
   if (!pool.length) {
+    if (override.includeIds.size) {
+      return [];
+    }
+
     return [{
       picked: forcedZeroCredit,
-      alternatives: [],
+      alternatives: available.filter((subject) => !override.excludeIds.has(subject.id)).slice(0, 4),
       totalCredits: 0,
       score: -999
     }];
@@ -482,6 +561,24 @@ function generateTermCombinations(available, completed, selection) {
     .map((combo) => enrichCombination(combo, available, completed, selection))
     .sort((a, b) => compareCombinationQuality(a, b, selection))
     .slice(0, 20);
+}
+
+function getTermOverride(selection, termIndex, available) {
+  const availableIds = new Set(available.map((subject) => subject.id));
+  const swaps = Array.isArray(selection.swaps?.[termIndex]) ? selection.swaps[termIndex] : [];
+  const includeIds = new Set();
+  const excludeIds = new Set();
+
+  swaps.forEach((swap) => {
+    if (availableIds.has(swap.includeId)) {
+      includeIds.add(swap.includeId);
+    }
+    if (availableIds.has(swap.excludeId)) {
+      excludeIds.add(swap.excludeId);
+    }
+  });
+
+  return { includeIds, excludeIds };
 }
 
 function enrichCombination(combo, available, completed, selection) {
@@ -691,9 +788,11 @@ function toggleCompleted(subjectId, checked) {
     completed.delete(subjectId);
   }
   state.completed = Array.from(completed);
+  state.swaps = {};
   persistState();
   renderChecklist();
   renderPreferences();
+  renderResults();
   renderSubmissionStatus();
 }
 
@@ -722,6 +821,7 @@ function getReadinessBadge(subject) {
 
 function setSubjectPreference(subjectId, preference) {
   state.preferences[subjectId] = preference;
+  state.swaps = {};
   persistState();
 }
 
@@ -732,8 +832,7 @@ function getSubjectPreference(subjectId, preferences = state.preferences) {
 function exportProgress() {
   const payload = {
     generatedAt: new Date().toISOString(),
-    state,
-    submittedSelection
+    state
   };
 
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
@@ -756,18 +855,16 @@ function importProgressFromFile(event) {
     try {
       const payload = JSON.parse(String(reader.result));
       const importedState = normalizeImportedState(payload);
-      const importedSubmittedSelection = normalizeSelection(payload.submittedSelection);
 
       state.minCredits = importedState.minCredits;
       state.maxCredits = importedState.maxCredits;
       state.maxSubjects = importedState.maxSubjects;
       state.completed = importedState.completed;
       state.preferences = importedState.preferences;
-      submittedSelection = importedSubmittedSelection;
+      state.swaps = importedState.swaps;
 
       sanitizeState();
       persistState();
-      persistSubmittedSelection();
       renderAll();
       elements.submissionStatus.textContent = "Progreso importado correctamente.";
       elements.submissionStatus.className = "status-text ok";
@@ -801,21 +898,8 @@ function loadState() {
   }
 }
 
-function loadSubmittedSelection() {
-  try {
-    const raw = localStorage.getItem("materia-selector-submitted");
-    return raw ? normalizeSelection(JSON.parse(raw)) : null;
-  } catch {
-    return null;
-  }
-}
-
 function persistState() {
   localStorage.setItem("materia-selector-state", JSON.stringify(state));
-}
-
-function persistSubmittedSelection() {
-  localStorage.setItem("materia-selector-submitted", JSON.stringify(submittedSelection));
 }
 
 function sanitizeState() {
@@ -824,21 +908,11 @@ function sanitizeState() {
   state.preferences = Object.fromEntries(
     Object.entries(state.preferences).filter(([id]) => validIds.has(id))
   );
+  state.swaps = normalizeSwaps(state.swaps, validIds);
   if (state.minCredits > state.maxCredits) {
     state.maxCredits = state.minCredits;
   }
   state.maxSubjects = clampNumber(state.maxSubjects, 1, 12, DEFAULT_STATE.maxSubjects);
-  if (submittedSelection) {
-    submittedSelection = normalizeSelection(submittedSelection);
-    submittedSelection.completed = (submittedSelection.completed || []).filter((id) => validIds.has(id));
-    submittedSelection.preferences = Object.fromEntries(
-      Object.entries(submittedSelection.preferences || {}).filter(([id]) => validIds.has(id))
-    );
-    if (submittedSelection.minCredits > submittedSelection.maxCredits) {
-      submittedSelection.maxCredits = submittedSelection.minCredits;
-    }
-    persistSubmittedSelection();
-  }
   persistState();
 }
 
@@ -848,39 +922,13 @@ function snapshotState() {
     maxCredits: state.maxCredits,
     maxSubjects: state.maxSubjects,
     completed: [...state.completed].sort(),
-    preferences: structuredClone(state.preferences)
-  };
-}
-
-function normalizeSelection(selection) {
-  if (!selection) {
-    return null;
-  }
-
-  const normalizedPreferences = Object.fromEntries(
-    Object.entries(selection.preferences || {}).map(([id, preference]) => {
-      const mode = preference?.mode;
-      if (mode === "prefer-1C" || mode === "prefer-2C") {
-        return [id, { mode: "prefer" }];
-      }
-      if (mode === "avoid-1C" || mode === "avoid-2C") {
-        return [id, { mode: "block" }];
-      }
-      return [id, { mode: mode || "none" }];
-    })
-  );
-
-  return {
-    minCredits: selection.minCredits ?? DEFAULT_STATE.minCredits,
-    maxCredits: selection.maxCredits ?? DEFAULT_STATE.maxCredits,
-    maxSubjects: selection.maxSubjects ?? DEFAULT_STATE.maxSubjects,
-    completed: Array.isArray(selection.completed) ? selection.completed : [],
-    preferences: normalizedPreferences
+    preferences: structuredClone(state.preferences),
+    swaps: structuredClone(state.swaps)
   };
 }
 
 function normalizeImportedState(payload) {
-  const sourceState = payload?.state || payload;
+  const sourceState = payload?.state || payload?.submittedSelection || payload;
   if (!sourceState || typeof sourceState !== "object") {
     throw new Error("El archivo no contiene un progreso valido.");
   }
@@ -904,34 +952,54 @@ function normalizeImportedState(payload) {
     maxCredits: Number.isFinite(sourceState.maxCredits) ? sourceState.maxCredits : DEFAULT_STATE.maxCredits,
     maxSubjects: Number.isFinite(sourceState.maxSubjects) ? sourceState.maxSubjects : DEFAULT_STATE.maxSubjects,
     completed,
-    preferences
+    preferences,
+    swaps: normalizeSwaps(sourceState.swaps)
   };
 }
 
 function renderSubmissionStatus() {
-  if (!submittedSelection) {
-    elements.submissionStatus.textContent = "Todavia no enviaste una seleccion.";
-    elements.submissionStatus.className = "status-text";
-    return;
-  }
-
-  if (hasPendingChanges()) {
-    elements.submissionStatus.textContent = "Hay cambios sin enviar. El plan mostrado corresponde a la ultima seleccion enviada.";
-    elements.submissionStatus.className = "status-text error";
-    return;
-  }
-
-  elements.submissionStatus.textContent = "La seleccion actual ya fue enviada y el plan mostrado esta actualizado.";
+  elements.submissionStatus.textContent = "El plan se actualiza automaticamente con la seleccion actual.";
   elements.submissionStatus.className = "status-text ok";
 }
 
-function hasPendingChanges() {
-  const current = JSON.stringify(snapshotState());
-  const submitted = JSON.stringify({
-    ...submittedSelection,
-    completed: [...(submittedSelection.completed || [])].sort()
-  });
-  return current !== submitted;
+function addTermSwap(termIndex, includeId, excludeId) {
+  const currentSwaps = Array.isArray(state.swaps[termIndex]) ? state.swaps[termIndex] : [];
+  state.swaps[termIndex] = currentSwaps
+    .filter((swap) => (
+      swap.includeId !== includeId &&
+      swap.excludeId !== includeId &&
+      swap.includeId !== excludeId &&
+      swap.excludeId !== excludeId
+    ))
+    .concat({ includeId, excludeId });
+  persistState();
+  renderResults();
+  renderSubmissionStatus();
+}
+
+function normalizeSwaps(swaps, validIds = null) {
+  if (!swaps || typeof swaps !== "object") {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(swaps)
+      .map(([termIndex, termSwaps]) => {
+        if (!Array.isArray(termSwaps)) {
+          return [termIndex, []];
+        }
+        return [termIndex, termSwaps.filter((swap) => {
+          if (!swap?.includeId || !swap?.excludeId || swap.includeId === swap.excludeId) {
+            return false;
+          }
+          if (validIds && (!validIds.has(swap.includeId) || !validIds.has(swap.excludeId))) {
+            return false;
+          }
+          return true;
+        })];
+      })
+      .filter(([, termSwaps]) => termSwaps.length)
+  );
 }
 
 function describeSubject(subject) {
